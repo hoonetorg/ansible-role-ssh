@@ -1,0 +1,6 @@
+---
+ssh_known_hosts_file: /etc/ssh/ssh_known_hosts
+ssh_vm_hosts_file: /etc/ssh/ssh_config.d/50-vm-known-hosts.conf
+ssh_key_types: [ed25519, ecdsa, rsa]
+# "<type> <public key>" per key of an entry: the key must start with the algorithm of its type
+ssh_key_regex: '^(ed25519 ssh-ed25519|ecdsa ecdsa-sha2-nistp(256|384|521)|rsa ssh-rsa) [A-Za-z0-9+/]+=*( .*)?$'

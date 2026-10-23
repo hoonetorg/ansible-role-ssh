@@ -1,0 +1,6 @@
+# {{ ansible_managed }}
+# temporary VMs: keys in a separate file per user, new keys accepted without asking, changed keys still refused
+# (rebuilt VM: ssh-keygen -R <ip|name> -f ~/.ssh/known_hosts_vms, or empty the file)
+Host {{ ssh_final.vm_hosts | join(' ') }}
+    UserKnownHostsFile ~/.ssh/known_hosts_vms
+    StrictHostKeyChecking accept-new

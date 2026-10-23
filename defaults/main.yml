@@ -1,0 +1,23 @@
+---
+# Merged with the inventory variable `ssh` into `ssh_final` (not logged: it holds the private host keys).
+ssh_defaults:
+  host_keys:
+    # private host keys of this host per type (ed25519, ecdsa, rsa), from the vault:
+    #   private: "{{ vault_ssh_host_private_keys }}"
+    # written to /etc/ssh/ssh_host_<type>_key, the public key (.pub) comes from the entry in known_hosts whose
+    # names contain the inventory name; types not listed are not touched; {} = host keys untouched
+    private: {}
+  # /etc/ssh/ssh_known_hosts, the same list for every host (desired state: the whole file); [] = not touched
+  #   - names: [de1, de1.example.org, 192.168.10.20]   # inventory host: its inventory name is in names
+  #     keys:
+  #       ed25519: "ssh-ed25519 AAAA... root@de1"
+  #       ecdsa: "ecdsa-sha2-nistp256 AAAA... root@de1"
+  #       rsa: "ssh-rsa AAAA... root@de1"
+  #   - names: [gitlab.com]                            # static machine outside the inventory
+  #     keys:
+  #       ed25519: "ssh-ed25519 AAAA..."
+  known_hosts: []
+  # ssh patterns of temporary VMs (e.g. "192.168.122.*", "*.vm.example.org", "osl"): their keys go into
+  # ~/.ssh/known_hosts_vms of each user, new keys are accepted without asking; [] = no such file
+  vm_hosts: []
+  packages: [openssh-server, openssh-clients]

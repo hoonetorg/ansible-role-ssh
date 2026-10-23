@@ -1,0 +1,152 @@
+---
+# no_log: the result contains the private host keys (set_fact results go to the per-host log of log_plays and to
+# -v output)
+- name: Build final ssh configuration
+  ansible.builtin.set_fact:
+    ssh_final: "{{ ssh_defaults | combine(ssh | default({}), recursive=True) }}"
+  no_log: true
+
+# only type names and public keys from here on, the private keys are looked up inside the tasks that write them
+- name: Key types and own public keys
+  ansible.builtin.set_fact:
+    ssh_private_types: "{{ ssh_final.host_keys.private | list }}"
+    ssh_own_entries: "{{ ssh_final.known_hosts | selectattr('names', 'contains', inventory_hostname) | list }}"
+
+- name: Own public keys
+  ansible.builtin.set_fact:
+    ssh_own_keys: "{{ (ssh_own_entries | first)['keys'] if ssh_own_entries | length > 0 else {} }}"
+
+- name: Only openSUSE is supported
+  ansible.builtin.assert:
+    that: ansible_facts['os_family'] == 'Suse'
+    fail_msg: "ssh: only openSUSE is implemented, not {{ ansible_facts['distribution'] }}"
+    quiet: true
+
+- name: Assert known_hosts entries (names, keys per type)
+  ansible.builtin.assert:
+    that:
+      - item.names is defined and item.names is sequence and item.names is not string and item.names | length > 0
+      - item.names | reject('match', '^[^ \t,]+$') | list | length == 0
+      - item['keys'] is defined and item['keys'] is mapping and item['keys'] | length > 0
+      - item['keys'].items() | map('join', ' ') | reject('match', ssh_key_regex) | list | length == 0
+    fail_msg: >-
+      ssh: known_hosts entry '{{ item.names | default('?') }}' needs names (a list, no spaces or commas) and keys
+      per type ({{ ssh_key_types | join('/') }}) like "ssh-ed25519 AAAA..." matching the type
+    quiet: true
+  loop: "{{ ssh_final.known_hosts }}"
+  loop_control:
+    label: "{{ item.names | default('?') }}"
+
+- name: Assert own host keys (one known_hosts entry with the inventory name, a public key per private key)
+  ansible.builtin.assert:
+    that:
+      - ssh_own_entries | length <= 1
+      - ssh_private_types | difference(ssh_key_types) | length == 0
+      - ssh_private_types | difference(ssh_own_keys | list) | length == 0
+    fail_msg: >-
+      ssh: {{ inventory_hostname }} needs exactly one known_hosts entry with '{{ inventory_hostname }}' in its names
+      and a public key there for every private host key (types {{ ssh_private_types | join('/') }}, allowed
+      {{ ssh_key_types | join('/') }})
+    quiet: true
+
+- name: Install packages
+  ansible.builtin.package:
+    name: "{{ ssh_final.packages }}"
+    state: present
+  when: ssh_final.packages | length > 0
+
+- name: Gather service facts
+  ansible.builtin.service_facts:
+
+- name: sshd running
+  ansible.builtin.set_fact:
+    ssh_sshd_running: "{{ ansible_facts.services['sshd.service'].state | default('') == 'running' }}"
+
+# no output, no diff (private key); validate (only when the file changes): the key must belong to the public key
+# of the inventory, else the file is not replaced; the failure is shown censored, the assert below names the type
+- name: Private host keys
+  ansible.builtin.copy:
+    content: "{{ ssh_final.host_keys.private[item] | trim }}\n"
+    dest: "/etc/ssh/ssh_host_{{ item }}_key"
+    owner: root
+    group: root
+    mode: "0600"
+    backup: true
+    validate: >-
+      /bin/sh -c 'test "$(ssh-keygen -y -f "$1" | cut -d" " -f1,2)" = "$2"' validate %s
+      '{{ ssh_own_keys[item].split()[:2] | join(" ") }}'
+  loop: "{{ ssh_private_types }}"
+  register: ssh_private_result
+  ignore_errors: true
+  no_log: true
+  diff: false
+  notify: ssh reload sshd
+
+# unchanged files skip validate: check them here (in check mode a changed file is not written yet, the real run
+# validates it); the output is the public key; loop over the types, never over the registered results
+- name: Public keys of unchanged private host keys
+  ansible.builtin.command: ssh-keygen -y -f /etc/ssh/ssh_host_{{ item }}_key
+  loop: "{{ ssh_private_types }}"
+  register: ssh_derived_result
+  changed_when: false
+  check_mode: false
+  when: not (ssh_private_result.results | selectattr('item', 'equalto', item) | first).changed
+    and not (ssh_private_result.results | selectattr('item', 'equalto', item) | first).failed
+
+- name: Assert private host keys belong to the public keys
+  ansible.builtin.assert:
+    that:
+      - not ssh_private_written.failed
+      - ssh_private_written.changed or ssh_private_derived.stdout.split()[:2] == ssh_own_keys[item].split()[:2]
+    fail_msg: >-
+      ssh: host key {{ item }}: the private key does not belong to the public key in ssh_known_hosts (or the copy
+      failed); the key file is unchanged, the .pub file is not written
+    quiet: true
+  loop: "{{ ssh_private_types }}"
+  vars:
+    ssh_private_written: "{{ ssh_private_result.results | selectattr('item', 'equalto', item) | first }}"
+    ssh_private_derived: "{{ ssh_derived_result.results | selectattr('item', 'equalto', item) | first }}"
+
+- name: Public host keys
+  ansible.builtin.copy:
+    content: "{{ ssh_own_keys[item] }}\n"
+    dest: "/etc/ssh/ssh_host_{{ item }}_key.pub"
+    owner: root
+    group: root
+    mode: "0644"
+  loop: "{{ ssh_private_types }}"
+  notify: ssh reload sshd
+
+- name: Global known hosts
+  ansible.builtin.template:
+    src: ssh_known_hosts.j2
+    dest: "{{ ssh_known_hosts_file }}"
+    owner: root
+    group: root
+    mode: "0644"
+    backup: true
+  when: ssh_final.known_hosts | length > 0
+
+- name: Directory ssh_config.d
+  ansible.builtin.file:
+    path: "{{ ssh_vm_hosts_file | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: ssh_final.vm_hosts | length > 0
+
+- name: Temporary VMs in ~/.ssh/known_hosts_vms
+  ansible.builtin.template:
+    src: vm-known-hosts.conf.j2
+    dest: "{{ ssh_vm_hosts_file }}"
+    owner: root
+    group: root
+    mode: "0644"
+  when: ssh_final.vm_hosts | length > 0
+
+- name: No file for temporary VMs
+  ansible.builtin.file:
+    path: "{{ ssh_vm_hosts_file }}"
+    state: absent
+  when: ssh_final.vm_hosts | length == 0

@@ -1,0 +1,8 @@
+# {{ ansible_managed }}
+# known hosts for all users (inventory: ssh_known_hosts); ssh accepts a host if this file or ~/.ssh/known_hosts
+# has its key
+{% for ssh_entry in ssh_final.known_hosts %}
+{% for ssh_type, ssh_key in ssh_entry['keys'] | dictsort %}
+{{ ssh_entry.names | join(',') }} {{ ssh_key.split()[:2] | join(' ') }}
+{% endfor %}
+{% endfor %}

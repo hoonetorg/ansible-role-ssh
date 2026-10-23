@@ -1,0 +1,11 @@
+galaxy_info:
+  author: hoonetorg
+  description: Fixed SSH host keys from the vault, global ssh_known_hosts and a separate known_hosts for temporary VMs
+  license: Apache-2.0
+  min_ansible_version: "2.15"
+  platforms:
+    - name: opensuse
+      versions: [all]
+  galaxy_tags: [ssh, openssh, hostkeys, knownhosts, desktop]
+
+dependencies: []

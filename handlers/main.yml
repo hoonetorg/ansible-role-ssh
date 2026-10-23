@@ -1,0 +1,7 @@
+---
+# sshd reads the host keys at (re)start; reload = SIGHUP re-exec, open sessions stay
+- name: ssh reload sshd
+  ansible.builtin.service:
+    name: sshd
+    state: reloaded
+  when: ssh_sshd_running
